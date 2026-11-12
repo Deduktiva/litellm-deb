@@ -19,8 +19,10 @@ if [ -z "$WHEEL" ]; then
     exit 1
 fi
 
-# --force reinstalls on upgrade, so configure is idempotent
-pipx install --force --python /usr/bin/python3 "$WHEEL"
+# [proxy] pulls the proxy server dependencies; without them the litellm CLI
+# exits with "Missing dependency". --force reinstalls on upgrade, so
+# configure is idempotent.
+pipx install --force --python /usr/bin/python3 "${WHEEL}[proxy]"
 
 chown -R litellm:litellm /opt/litellm
 
