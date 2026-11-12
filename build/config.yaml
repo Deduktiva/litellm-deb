@@ -1,0 +1,13 @@
+# LiteLLM proxy configuration (/etc/litellm/config.yaml).
+# Default target: the local vLLM server on an NVIDIA DGX Spark, which serves
+# an OpenAI-compatible API at http://127.0.0.1:30000/v1.
+# Edit the model list for your setup, then: sudo systemctl restart litellm
+model_list:
+  - model_name: qwen
+    litellm_params:
+      model: openai/qwen3.8-27b
+      api_base: http://127.0.0.1:30000/v1
+      api_key: local
+
+litellm_settings:
+  drop_params: true

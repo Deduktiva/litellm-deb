@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+# Only a removal cleans up; upgrade and abort-* leave everything in place.
+# /etc/litellm is kept as conffiles until purge.
+if [ "$1" = "remove" ]; then
+    if command -v pipx >/dev/null 2>&1; then
+        PIPX_HOME=/opt/litellm PIPX_BIN_DIR=/opt/litellm/bin \
+            pipx uninstall litellm || true
+    fi
+    rm -rf /opt/litellm
+    userdel litellm || true
+fi
+
+exit 0

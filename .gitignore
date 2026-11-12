@@ -1,0 +1,7 @@
+build/wheels/
+dist/
+site/
+*.deb
+*.whl
+*.log
+.venv

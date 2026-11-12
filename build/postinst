@@ -1,0 +1,32 @@
+#!/bin/sh
+set -e
+
+[ "$1" = "configure" ] || exit 0
+
+export PIPX_HOME=/opt/litellm
+export PIPX_BIN_DIR=/opt/litellm/bin
+
+if ! getent passwd litellm >/dev/null; then
+    useradd --system --no-create-home --home-dir /opt/litellm \
+        --shell /usr/sbin/nologin litellm
+fi
+
+mkdir -p /opt/litellm
+
+WHEEL=$(ls /usr/share/litellm/litellm-*.whl | head -1)
+if [ -z "$WHEEL" ]; then
+    echo "litellm: no vendored wheel found in /usr/share/litellm" >&2
+    exit 1
+fi
+
+# --force reinstalls on upgrade, so configure is idempotent
+pipx install --force --python /usr/bin/python3 "$WHEEL"
+
+chown -R litellm:litellm /opt/litellm
+
+if [ -d /run/systemd/system ]; then
+    deb-systemd-helper enable litellm.service
+    deb-systemd-invoke restart litellm.service
+fi
+
+exit 0
