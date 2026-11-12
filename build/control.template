@@ -2,7 +2,7 @@ Package: litellm
 Version: {{VERSION}}-1
 Architecture: {{ARCH}}
 Maintainer: zeha <owncore@zeha.owncore.ai>
-Depends: python3, python3-pipx, python3-venv, systemd
+Depends: python3, pipx, python3-venv, systemd
 Section: python
 Priority: optional
 Description: unified LLM proxy (packaged from PyPI)
