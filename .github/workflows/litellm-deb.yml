@@ -1,0 +1,197 @@
+name: litellm-deb
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: apt-repo
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      built: ${{ steps.result.outputs.built }}
+      version: ${{ steps.resolve.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve latest litellm on PyPI
+        id: resolve
+        run: |
+          set -euo pipefail
+          curl -fsSL https://pypi.org/pypi/litellm/json -o pypi.json
+          /usr/bin/python3 -I - pypi.json > resolved.env <<'PY'
+          import json, re, sys
+          data = json.load(open(sys.argv[1]))
+          version = data["info"]["version"]
+          pattern = re.compile(r"^litellm-" + re.escape(version)
+                               + r"[-_]cp310-abi3-manylinux_2_28_(aarch64|x86_64)\.whl$")
+          found = {}
+          for f in data["urls"]:
+              m = pattern.match(f["filename"])
+              if m:
+                  found[m.group(1)] = f["url"]
+          missing = {"aarch64", "x86_64"} - found.keys()
+          if missing:
+              sys.exit(f"litellm {version}: missing manylinux_2_28 wheel(s): {sorted(missing)}")
+          print(f"VERSION={version}")
+          print(f"WHEEL_URL_ARM64={found['aarch64']}")
+          print(f"WHEEL_URL_AMD64={found['x86_64']}")
+          PY
+          cat resolved.env
+          cat resolved.env >> "$GITHUB_ENV"
+          grep '^VERSION=' resolved.env | sed 's/^VERSION=/version=/' >> "$GITHUB_OUTPUT"
+          rm -f pypi.json resolved.env
+
+      - name: Skip if this version is already released
+        id: skip
+        run: |
+          if gh release view "v$VERSION" --json tagName >/dev/null 2>&1; then
+            echo "no new litellm, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build tools
+        if: steps.skip.outputs.skip == 'false'
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+
+      - name: Download wheels
+        if: steps.skip.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p build/wheels
+          curl -fsSL --retry 3 -o "build/wheels/${WHEEL_URL_ARM64##*/}" "$WHEEL_URL_ARM64"
+          curl -fsSL --retry 3 -o "build/wheels/${WHEEL_URL_AMD64##*/}" "$WHEEL_URL_AMD64"
+          ls -l build/wheels
+
+      - name: Wheel sanity
+        if: steps.skip.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          for whl in build/wheels/*.whl; do
+            /usr/bin/python3 -I - "$whl" <<'PY'
+          import sys, zipfile
+          path = sys.argv[1]
+          with zipfile.ZipFile(path) as z:
+              bad = z.testzip()
+              if bad:
+                  sys.exit(f"{path}: corrupt member {bad}")
+              names = z.namelist()
+              if "litellm/__init__.py" not in names:
+                  sys.exit(f"{path}: litellm/__init__.py missing")
+              if not any(n.endswith(".dist-info/entry_points.txt") for n in names):
+                  sys.exit(f"{path}: entry_points.txt missing in dist-info")
+          print(f"{path}: ok ({len(names)} files)")
+          PY
+          done
+
+      - name: Build debs
+        if: steps.skip.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          build/build-deb.sh "$VERSION" arm64 "build/wheels/${WHEEL_URL_ARM64##*/}" dist
+          build/build-deb.sh "$VERSION" amd64 "build/wheels/${WHEEL_URL_AMD64##*/}" dist
+          echo "$VERSION" > dist/version.txt
+
+      - name: Verify debs
+        if: steps.skip.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          for arch in arm64 amd64; do
+            deb="dist/litellm_${VERSION}-1_${arch}.deb"
+            dpkg-deb --info "$deb"
+            dpkg-deb --contents "$deb"
+            test "$(dpkg-deb -f "$deb" Architecture)" = "$arch"
+            test "$(dpkg-deb -f "$deb" Version)" = "${VERSION}-1"
+          done
+          tmp=$(mktemp -d)
+          dpkg-deb -R "dist/litellm_${VERSION}-1_arm64.deb" "$tmp"
+          (cd "$tmp" && find . -type f | sort) > actual.txt
+          cat > expected.txt <<LIST
+          ./DEBIAN/conffiles
+          ./DEBIAN/control
+          ./DEBIAN/postinst
+          ./DEBIAN/postrm
+          ./DEBIAN/prerm
+          ./etc/litellm/config.yaml
+          ./etc/litellm/litellm.env
+          ./lib/systemd/system/litellm.service
+          ./usr/share/litellm/litellm-${VERSION}-cp310-abi3-manylinux_2_28_aarch64.whl
+          LIST
+          sed -i 's/^ *//' expected.txt
+          diff -u expected.txt actual.txt
+          for s in postinst prerm postrm; do sh -n "$tmp/DEBIAN/$s"; done
+          rm -rf "$tmp" actual.txt expected.txt
+
+      - uses: actions/upload-artifact@v4
+        if: steps.skip.outputs.skip == 'false'
+        with:
+          name: debs
+          path: |
+            dist/*.deb
+            dist/version.txt
+          if-no-files-found: error
+
+      - name: Result
+        id: result
+        run: echo "built=${{ steps.skip.outputs.skip == 'false' }}" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: build
+    if: needs.build.outputs.built == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: debs
+          path: dist
+      - name: Create GitHub release
+        run: |
+          gh release create "v$VERSION" dist/*.deb \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "litellm $VERSION" \
+            --notes "Weekly build from PyPI"
+
+  apt-repo:
+    needs: build
+    if: needs.build.outputs.built == 'true'
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: debs
+          path: dist
+      - name: Install repo tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev apt-utils
+      - name: Build apt repository
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: build/build-apt-repo.sh site "$VERSION" dist/*.deb
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v5
