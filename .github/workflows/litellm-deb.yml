@@ -2,7 +2,8 @@ name: litellm-deb
 
 on:
   schedule:
-    - cron: "0 6 * * 1"
+    - cron: "42 18 * * 3"
+      timezone: Europe/Vienna
   workflow_dispatch:
 
 permissions:
