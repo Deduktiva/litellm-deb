@@ -1,8 +1,9 @@
 # litellm-deb
 
 Debian packages of the latest [LiteLLM](https://github.com/BerriAI/litellm) release from PyPI, for
-**Ubuntu 24.04 (noble)** on **arm64** (primary target: NVIDIA DGX Spark with a local vLLM at
-`http://127.0.0.1:30000/v1`) and **amd64**.
+**Debian 13 (trixie)** on **amd64** and **arm64**. Primary target: a Debian 13 VM running the
+proxy against an NVIDIA DGX Spark's vLLM over the local network (the arm64 build also covers the
+Spark itself, if you ever run the proxy on it).
 
 The package vendors the upstream wheel, installs it with pipx (including the `proxy` extra) into a
 system venv under `/opt/litellm`, and runs the LiteLLM proxy as the `litellm` systemd service.
@@ -56,10 +57,12 @@ Local build: `build/build-deb.sh <version> <arch> <wheel> <out-dir>` and
 
 ## Configuration
 
-- Models: `/etc/litellm/config.yaml` (defaults to the DGX Spark vLLM at `127.0.0.1:30000`).
+- Models: `/etc/litellm/config.yaml` — defaults to a local vLLM (`127.0.0.1:30000`); point
+  `api_base` at the machine running vLLM (e.g. the DGX Spark over the network).
 - Secrets and environment: `/etc/litellm/litellm.env`, e.g. `LITELLM_MASTER_KEY=...`.
 - Both files are conffiles: upgrades keep your edits.
-- The service listens on `127.0.0.1:4000`.
+- The service listens on `127.0.0.1:4000` (edit `build/litellm.service` if the VM must serve
+  other machines; keep it off `0.0.0.0` until the proxy has SSO or a master key).
 
 ```sh
 sudo systemctl restart litellm
@@ -78,7 +81,8 @@ sudo apt purge litellm
 ## Caveats
 
 - Upstream publishes per-architecture `cp310-abi3-manylinux_2_28` wheels; the build fails loudly
-  if either is missing for a release.
-- `pipx` comes from noble's `universe` component; keep universe enabled.
+  if either is missing for a release. The `abi3` tag also covers trixie's Python 3.13, so the
+  wheels install without rebuilds.
+- `pipx` is in trixie's `main` component (nothing extra to enable on clients).
 - The Pages apt repository is public by design and contains no secrets (only the debs, indexes,
   signatures and the public key).

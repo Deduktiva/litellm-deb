@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Builds Debian packages of the latest LiteLLM from PyPI for Ubuntu 24.04 (arm64 for the DGX Spark,
-amd64) and publishes them weekly as GitHub Releases and a signed apt repository on GitHub Pages.
+Builds Debian packages of the latest LiteLLM from PyPI for Debian 13 (trixie) on amd64 (primary
+target: a Debian 13 VM running the proxy against the DGX Spark's vLLM over the network) and
+arm64, and publishes them weekly as GitHub Releases and a signed apt repository on GitHub Pages.
 
 ## Build, test, run
 
@@ -15,9 +16,9 @@ amd64) and publishes them weekly as GitHub Releases and a signed apt repository 
   `APT_GPG_PASSPHRASE`) and never builds an unsigned repo.
 - Workflow: `.github/workflows/litellm-deb.yml` calls the reusable
   `.github/workflows/publish-apt-repo.yml` after the release; validate YAML with PyYAML `safe_load`.
-- Test runs happen in the dev container (`.owncore/devenv.yml` + `Dockerfile.dev` — adds
-  `dpkg-dev`, `apt-utils`, `gnupg2`; no dev server): bring it up, then run the commands below
-  through `devenv_exec` rather than host tooling.
+- Test runs happen in the dev container (`.owncore/devenv.yml` + `Dockerfile.dev` — base image is
+  Debian 13 like the target, plus `dpkg-dev`, `apt-utils`, `gnupg2`; no dev server): bring it up,
+  then run the commands below through `devenv_exec` rather than host tooling.
 - Validate a built repo with apt as non-root: `apt-get update`/`apt-cache policy` with
   `-o Dir::State=... -o Dir::Cache=... -o Dir::Etc=...` pointing at scratch dirs, source in
   `<Dir::Etc>/sources.list.d/*.list` (`deb [signed-by=<keyring>] file:<site> stable main`).
@@ -28,7 +29,8 @@ amd64) and publishes them weekly as GitHub Releases and a signed apt repository 
   bash with `set -euo pipefail`.
 - The deb installs the wheel with the `[proxy]` extra: the bare wheel's `litellm` CLI exits with
   "Missing dependency ... websockets".
-- Noble has no `python3-pipx`; the dependency is `pipx`.
+- Trixie has no `python3-pipx` package; the dependency is `pipx` (trixie `main`, so no extra
+  component is needed on clients).
 - Packages files must use `Filename: pool/main/litellm/...` relative to the repo root
   (`dpkg-scanpackages --arch <a> pool/main/litellm` run from the site dir).
 - An arm64 wheel cannot be pip-installed on an amd64 host; test the pipx path with the host's wheel.

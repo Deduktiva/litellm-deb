@@ -67,7 +67,7 @@ cat > "$SITE/index.html" <<HTML
 <html lang="en"><head><meta charset="utf-8"><title>litellm-deb apt repository</title></head>
 <body>
 <h1>litellm-deb</h1>
-<p>LiteLLM ${VERSION} from PyPI, packaged for Ubuntu 24.04 (noble), architectures: ${ARCHS[*]}.</p>
+<p>LiteLLM ${VERSION} from PyPI, packaged for Debian 13 (trixie), architectures: ${ARCHS[*]}.</p>
 <pre>
 curl -fsSL ${SITE_URL}/litellm-archive-keyring.gpg | sudo install -D -m 0644 /dev/stdin /etc/apt/keyrings/litellm-deb.gpg
 echo "deb [signed-by=/etc/apt/keyrings/litellm-deb.gpg] ${SITE_URL}/ stable main" | sudo tee /etc/apt/sources.list.d/litellm-deb.list
