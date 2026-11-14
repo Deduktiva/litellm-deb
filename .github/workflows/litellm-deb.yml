@@ -37,17 +37,14 @@ jobs:
           version = data["info"]["version"]
           pattern = re.compile(r"^litellm-" + re.escape(version)
                                + r"[-_]cp310-abi3-manylinux_2_28_(aarch64|x86_64)\.whl$")
-          found = {}
+          found = set()
           for f in data["urls"]:
-              m = pattern.match(f["filename"])
-              if m:
-                  found[m.group(1)] = f["url"]
-          missing = {"aarch64", "x86_64"} - found.keys()
+              if pattern.match(f["filename"]):
+                  found.add(f["filename"].rsplit(".", 2)[0].rsplit("_", 1)[1])
+          missing = {"aarch64", "x86_64"} - found
           if missing:
               sys.exit(f"litellm {version}: missing manylinux_2_28 wheel(s): {sorted(missing)}")
           print(f"VERSION={version}")
-          print(f"WHEEL_URL_ARM64={found['aarch64']}")
-          print(f"WHEEL_URL_AMD64={found['x86_64']}")
           PY
           cat resolved.env
           cat resolved.env >> "$GITHUB_ENV"
@@ -66,44 +63,38 @@ jobs:
 
       - name: Install build tools
         if: steps.skip.outputs.skip == 'false'
-        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev python3-pip
 
-      - name: Download wheels
+      # Full dependency closure per architecture, downloaded cross-platform
+      # by the native runner pip. This is the only step that needs PyPI.
+      - name: Download wheel closures
         if: steps.skip.outputs.skip == 'false'
         run: |
           set -euo pipefail
-          mkdir -p build/wheels
-          curl -fsSL --retry 3 -o "build/wheels/${WHEEL_URL_ARM64##*/}" "$WHEEL_URL_ARM64"
-          curl -fsSL --retry 3 -o "build/wheels/${WHEEL_URL_AMD64##*/}" "$WHEEL_URL_AMD64"
-          ls -l build/wheels
+          build/download-wheels.sh "$VERSION" arm64 build/wheels-arm64
+          build/download-wheels.sh "$VERSION" amd64 build/wheels-amd64
 
-      - name: Wheel sanity
+      # The venv must be built by Debian 13's python3.13, so both debs are
+      # assembled inside debian:trixie containers; the arm64 one runs under
+      # qemu (preinstalled on the runner). The install step in the container
+      # is --no-index, i.e. offline.
+      - name: Build debs in Debian 13 containers
         if: steps.skip.outputs.skip == 'false'
         run: |
           set -euo pipefail
-          for whl in build/wheels/*.whl; do
-            /usr/bin/python3 -I - "$whl" <<'PY'
-          import sys, zipfile
-          path = sys.argv[1]
-          with zipfile.ZipFile(path) as z:
-              bad = z.testzip()
-              if bad:
-                  sys.exit(f"{path}: corrupt member {bad}")
-              names = z.namelist()
-              if "litellm/__init__.py" not in names:
-                  sys.exit(f"{path}: litellm/__init__.py missing")
-              if not any(n.endswith(".dist-info/entry_points.txt") for n in names):
-                  sys.exit(f"{path}: entry_points.txt missing in dist-info")
-          print(f"{path}: ok ({len(names)} files)")
-          PY
+          for arch in arm64 amd64; do
+            [ "$arch" = arm64 ] && platform=linux/arm64 || platform=linux/amd64
+            docker run --rm --platform "$platform" \
+              -v "$PWD/build:/w:ro" -v "$PWD/dist:/out" \
+              -e VERSION="$VERSION" -e ARCH="$arch" \
+              debian:trixie bash -c '
+                set -euo pipefail
+                apt-get update
+                apt-get install -y --no-install-recommends python3 python3-venv dpkg-dev
+                /w/make-venv.sh "$VERSION" "/w/wheels-${ARCH}" "/tmp/litellm-venv"
+                /w/build-deb.sh "$VERSION" "$ARCH" "/tmp/litellm-venv" /out
+              '
           done
-
-      - name: Build debs
-        if: steps.skip.outputs.skip == 'false'
-        run: |
-          set -euo pipefail
-          build/build-deb.sh "$VERSION" arm64 "build/wheels/${WHEEL_URL_ARM64##*/}" dist
-          build/build-deb.sh "$VERSION" amd64 "build/wheels/${WHEEL_URL_AMD64##*/}" dist
           echo "$VERSION" > dist/version.txt
 
       - name: Verify debs
@@ -112,29 +103,52 @@ jobs:
           set -euo pipefail
           for arch in arm64 amd64; do
             deb="dist/litellm_${VERSION}-1_${arch}.deb"
-            dpkg-deb --info "$deb"
-            dpkg-deb --contents "$deb"
             test "$(dpkg-deb -f "$deb" Architecture)" = "$arch"
             test "$(dpkg-deb -f "$deb" Version)" = "${VERSION}-1"
+            test "$(dpkg-deb -f "$deb" Depends)" = "python3, python3.13, systemd"
+            contents=$(dpkg-deb --contents "$deb")
+            for f in ./DEBIAN/conffiles ./DEBIAN/control ./DEBIAN/postinst \
+                     ./DEBIAN/postrm ./DEBIAN/prerm \
+                     ./etc/litellm/config.yaml ./etc/litellm/litellm.env \
+                     ./lib/systemd/system/litellm.service \
+                     ./usr/bin/litellm \
+                     ./opt/litellm/venv/bin/litellm \
+                     ./opt/litellm/venv/lib/python3.13/site-packages/litellm/__init__.py; do
+              echo "$contents" | grep -q " ${f}$" || { echo "missing in $deb: $f"; exit 1; }
+            done
+            # the shipped venv must be self-contained: no pipx, no pip
+            echo "$contents" | grep -q 'pipx' && { echo "pipx trace in $deb"; exit 1; }
+            echo "$contents" | grep -q 'venv/bin/pip' && { echo "pip shipped in $deb"; exit 1; }
+            n=$(echo "$contents" | wc -l)
+            [ "$n" -gt 500 ] || { echo "suspiciously few files in $deb: $n"; exit 1; }
+            echo "$deb: $n files, ok"
           done
           tmp=$(mktemp -d)
-          dpkg-deb -R "dist/litellm_${VERSION}-1_arm64.deb" "$tmp"
-          (cd "$tmp" && find . -type f | sort) > actual.txt
-          cat > expected.txt <<LIST
-          ./DEBIAN/conffiles
-          ./DEBIAN/control
-          ./DEBIAN/postinst
-          ./DEBIAN/postrm
-          ./DEBIAN/prerm
-          ./etc/litellm/config.yaml
-          ./etc/litellm/litellm.env
-          ./lib/systemd/system/litellm.service
-          ./usr/share/litellm/litellm-${VERSION}-cp310-abi3-manylinux_2_28_aarch64.whl
-          LIST
-          sed -i 's/^ *//' expected.txt
-          diff -u expected.txt actual.txt
+          dpkg-deb -R "dist/litellm_${VERSION}-1_amd64.deb" "$tmp"
           for s in postinst prerm postrm; do sh -n "$tmp/DEBIAN/$s"; done
-          rm -rf "$tmp" actual.txt expected.txt
+          rm -rf "$tmp"
+
+      # End-to-end: install each deb in a fresh Debian 13 container (no
+      # network needed for the install itself) and run the entry point.
+      - name: Smoke test (dpkg -i in Debian 13)
+        if: steps.skip.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          for arch in arm64 amd64; do
+            [ "$arch" = arm64 ] && platform=linux/arm64 || platform=linux/amd64
+            docker run --rm --platform "$platform" \
+              -v "$PWD/dist:/d:ro" \
+              -e VERSION="$VERSION" -e ARCH="$arch" \
+              debian:trixie bash -c '
+                set -euo pipefail
+                apt-get update
+                apt-get install -y --no-install-recommends python3 python3.13 systemd
+                dpkg -i "/d/litellm_${VERSION}-1_${ARCH}.deb"
+                litellm --version
+                dpkg -V litellm
+                echo "smoke test ok ($ARCH)"
+              '
+          done
 
       - uses: actions/upload-artifact@v7
         if: steps.skip.outputs.skip == 'false'
@@ -163,6 +177,8 @@ jobs:
           path: dist
       - name: Create GitHub release
         run: |
+          set -euo pipefail
+          [ -f dist/version.txt ] || { echo "version.txt missing from artifact"; exit 1; }
           gh release create "v$VERSION" dist/*.deb \
             --repo "$GITHUB_REPOSITORY" \
             --title "litellm $VERSION" \

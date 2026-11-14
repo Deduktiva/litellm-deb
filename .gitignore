@@ -1,4 +1,8 @@
 build/wheels/
+build/wheels-amd64/
+build/wheels-arm64/
+build/venv-amd64/
+build/venv-arm64/
 dist/
 site/
 *.deb

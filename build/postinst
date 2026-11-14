@@ -3,26 +3,17 @@ set -e
 
 [ "$1" = "configure" ] || exit 0
 
-export PIPX_HOME=/opt/litellm
-export PIPX_BIN_DIR=/opt/litellm/bin
-
 if ! getent passwd litellm >/dev/null; then
     useradd --system --no-create-home --home-dir /opt/litellm \
         --shell /usr/sbin/nologin litellm
 fi
 
-mkdir -p /opt/litellm
-
-WHEEL=$(ls /usr/share/litellm/litellm-*.whl | head -1)
-if [ -z "$WHEEL" ]; then
-    echo "litellm: no vendored wheel found in /usr/share/litellm" >&2
-    exit 1
-fi
-
-# [proxy] pulls the proxy server dependencies; without them the litellm CLI
-# exits with "Missing dependency". --force reinstalls on upgrade, so
-# configure is idempotent.
-pipx install --force --python /usr/bin/python3 "${WHEEL}[proxy]"
+# Remove the pipx layout of the previous package generations on upgrade:
+# the venv under /opt/litellm/venv is installed by dpkg itself now, and the
+# vendored wheel in /usr/share/litellm is gone.
+rm -rf /opt/litellm/venvs /opt/litellm/bin /opt/litellm/packages \
+    /opt/litellm/manifest.json /opt/litellm/installed*.json \
+    /usr/share/litellm
 
 chown -R litellm:litellm /opt/litellm
 

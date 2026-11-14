@@ -6,9 +6,8 @@ Wants=network-online.target
 
 [Service]
 User=litellm
-Environment=PIPX_HOME=/opt/litellm
 EnvironmentFile=-/etc/litellm/litellm.env
-ExecStart=/opt/litellm/venvs/litellm/bin/litellm --config /etc/litellm/config.yaml --host 127.0.0.1 --port 4000
+ExecStart=/opt/litellm/venv/bin/litellm --config /etc/litellm/config.yaml --host 127.0.0.1 --port 4000
 Restart=on-failure
 RestartSec=5
 

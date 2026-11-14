@@ -1,10 +1,15 @@
 # Dev image for litellm-deb: packaging + apt-repo build/test tools on top of
-# the Owncore base image. Used by .owncore/devenv.yml for test runs of
-# build/build-deb.sh and build/build-apt-repo.sh.
+# the Owncore base image. Used by .owncore/devenv.yml for test runs of the
+# build pipeline (download-wheels.sh, make-venv.sh, build-deb.sh) and of
+# build/build-apt-repo.sh.
 FROM owncore-devenv:latest
 
 # dpkg-dev: dpkg-deb, dpkg-scanpackages; apt-utils: apt-ftparchive;
-# gnupg2: gpg + gpg-agent for signing the repository (build-apt-repo.sh)
+# gnupg2: gpg + gpg-agent for signing the repository (build-apt-repo.sh);
+# python3 + python3-venv + python3-pip: building the packaged venv and the
+# cross-platform wheel downloads (the image must stay on Debian 13, whose
+# python3 is 3.13 — the venv interpreter shipped in the deb).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg2 \
+    && apt-get install -y --no-install-recommends \
+       dpkg-dev apt-utils gnupg2 python3 python3-venv python3-pip \
     && rm -rf /var/lib/apt/lists/*
