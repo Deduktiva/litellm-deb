@@ -24,7 +24,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve latest litellm on PyPI
         id: resolve
@@ -136,7 +136,7 @@ jobs:
           for s in postinst prerm postrm; do sh -n "$tmp/DEBIAN/$s"; done
           rm -rf "$tmp" actual.txt expected.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.skip.outputs.skip == 'false'
         with:
           name: debs
@@ -157,7 +157,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.build.outputs.version }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: debs
           path: dist
