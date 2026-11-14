@@ -1,0 +1,4 @@
+# litellm-deb dev container: build the debs and the apt repository, and test
+# them. No dev server - this is a packaging project, all checks are CLI.
+# See Dockerfile.dev for the packages (dpkg-dev, apt-utils, gnupg2).
+dockerfile: Dockerfile.dev

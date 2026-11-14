@@ -1,0 +1,10 @@
+# Dev image for litellm-deb: packaging + apt-repo build/test tools on top of
+# the Owncore base image. Used by .owncore/devenv.yml for test runs of
+# build/build-deb.sh and build/build-apt-repo.sh.
+FROM owncore-devenv:latest
+
+# dpkg-dev: dpkg-deb, dpkg-scanpackages; apt-utils: apt-ftparchive;
+# gnupg2: gpg + gpg-agent for signing the repository (build-apt-repo.sh)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg2 \
+    && rm -rf /var/lib/apt/lists/*
