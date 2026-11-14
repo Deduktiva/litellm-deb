@@ -169,7 +169,7 @@ jobs:
             --notes "Weekly build from PyPI"
 
   # apt repo: rebuild dists/ + pool/ from the release and deploy to
-  # https://<owner>.github.io/litellm-deb/. The publish logic (download the
+  # https://deduktiva.github.io/litellm-deb/. The publish logic (download the
   # release debs, build the signed repo, deploy to Pages) lives in the
   # reusable publish-apt-repo.yml, which can also be dispatched manually to
   # republish an existing version. Runs after release so it always mirrors

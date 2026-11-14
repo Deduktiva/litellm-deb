@@ -16,6 +16,9 @@ VERSION=$2
 shift 2
 DEBS=("$@")
 
+# Public address of the deployed repository (GitHub Pages); rendered into index.html.
+SITE_URL="https://deduktiva.github.io/litellm-deb"
+
 # Signing is mandatory - fail fast before doing any work.
 : "${APT_GPG_PRIVATE_KEY:?APT_GPG_PRIVATE_KEY is required (ASCII-armored secret key); refusing to build an unsigned repository}"
 
@@ -66,9 +69,8 @@ cat > "$SITE/index.html" <<HTML
 <h1>litellm-deb</h1>
 <p>LiteLLM ${VERSION} from PyPI, packaged for Ubuntu 24.04 (noble), architectures: ${ARCHS[*]}.</p>
 <pre>
-# &lt;this-url&gt; is the address of this page, e.g. https://USER.github.io/litellm-deb
-curl -fsSL &lt;this-url&gt;/litellm-archive-keyring.gpg | sudo install -D -m 0644 /dev/stdin /etc/apt/keyrings/litellm-deb.gpg
-echo "deb [signed-by=/etc/apt/keyrings/litellm-deb.gpg] &lt;this-url&gt;/ stable main" | sudo tee /etc/apt/sources.list.d/litellm-deb.list
+curl -fsSL ${SITE_URL}/litellm-archive-keyring.gpg | sudo install -D -m 0644 /dev/stdin /etc/apt/keyrings/litellm-deb.gpg
+echo "deb [signed-by=/etc/apt/keyrings/litellm-deb.gpg] ${SITE_URL}/ stable main" | sudo tee /etc/apt/sources.list.d/litellm-deb.list
 sudo apt update &amp;&amp; sudo apt install litellm
 </pre>
 </body></html>

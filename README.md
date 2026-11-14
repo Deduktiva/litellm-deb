@@ -11,12 +11,10 @@ GPG-signed apt repository to GitHub Pages.
 
 ## Install (client)
 
-Replace `<GITHUB_USER>` with the account that hosts this repository.
-
 ```sh
-curl -fsSL https://<GITHUB_USER>.github.io/litellm-deb/litellm-archive-keyring.gpg \
+curl -fsSL https://deduktiva.github.io/litellm-deb/litellm-archive-keyring.gpg \
   | sudo install -D -m 0644 /dev/stdin /etc/apt/keyrings/litellm-deb.gpg
-echo "deb [signed-by=/etc/apt/keyrings/litellm-deb.gpg] https://<GITHUB_USER>.github.io/litellm-deb/ stable main" \
+echo "deb [signed-by=/etc/apt/keyrings/litellm-deb.gpg] https://deduktiva.github.io/litellm-deb/ stable main" \
   | sudo tee /etc/apt/sources.list.d/litellm-deb.list
 sudo apt update
 sudo apt install litellm
