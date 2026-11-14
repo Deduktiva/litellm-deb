@@ -10,10 +10,17 @@ amd64) and publishes them weekly as GitHub Releases and a signed apt repository 
 - Syntax: `bash -n build/*.sh` and `sh -n build/postinst build/prerm build/postrm`.
 - One deb: `build/build-deb.sh <version> <arch> <wheel> dist` (needs `dpkg-deb`).
 - Repo: `APT_GPG_PRIVATE_KEY=... build/build-apt-repo.sh site <version> dist/*.deb`
-  (needs `dpkg-scanpackages`, `apt-ftparchive`, `gpg`; unsigned without the key).
-- Workflow: `.github/workflows/litellm-deb.yml`; validate YAML with PyYAML `safe_load`.
+  (needs `dpkg-scanpackages`, `apt-ftparchive`, `gpg`). The key is mandatory: the script
+  hard-fails without `APT_GPG_PRIVATE_KEY` (ASCII-armored secret key; optional
+  `APT_GPG_PASSPHRASE`) and never builds an unsigned repo.
+- Workflow: `.github/workflows/litellm-deb.yml` calls the reusable
+  `.github/workflows/publish-apt-repo.yml` after the release; validate YAML with PyYAML `safe_load`.
+- Test runs happen in the dev container (`.owncore/devenv.yml` + `Dockerfile.dev` — adds
+  `dpkg-dev`, `apt-utils`, `gnupg2`; no dev server): bring it up, then run the commands below
+  through `devenv_exec` rather than host tooling.
 - Validate a built repo with apt as non-root: `apt-get update`/`apt-cache policy` with
-  `-o Dir::State=... -o Dir::Cache=... -o Dir::Etc::SourceParts=...` pointing at a scratch dir.
+  `-o Dir::State=... -o Dir::Cache=... -o Dir::Etc=...` pointing at scratch dirs, source in
+  `<Dir::Etc>/sources.list.d/*.list` (`deb [signed-by=<keyring>] file:<site> stable main`).
 
 ## Conventions
 

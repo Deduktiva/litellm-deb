@@ -167,31 +167,16 @@ jobs:
             --title "litellm $VERSION" \
             --notes "Weekly build from PyPI"
 
+  # apt repo: rebuild dists/ + pool/ from the release and deploy to
+  # https://<owner>.github.io/litellm-deb/. The publish logic (download the
+  # release debs, build the signed repo, deploy to Pages) lives in the
+  # reusable publish-apt-repo.yml, which can also be dispatched manually to
+  # republish an existing version. Runs after release so it always mirrors
+  # the release assets.
   apt-repo:
-    needs: build
+    needs: [build, release]
     if: needs.build.outputs.built == 'true'
-    runs-on: ubuntu-24.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    env:
-      VERSION: ${{ needs.build.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: debs
-          path: dist
-      - name: Install repo tools
-        run: sudo apt-get update && sudo apt-get install -y dpkg-dev apt-utils
-      - name: Build apt repository
-        env:
-          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
-          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
-        run: build/build-apt-repo.sh site "$VERSION" dist/*.deb
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: site
-      - id: deploy
-        uses: actions/deploy-pages@v5
+    uses: ./.github/workflows/publish-apt-repo.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.build.outputs.version }}

@@ -1,8 +1,9 @@
 #!/bin/bash
 # Build a flat-ish apt repository (dists/stable/main) for GitHub Pages.
 # Usage: build-apt-repo.sh <site-dir> <version> <deb> [<deb> ...]
-# Env (optional): APT_GPG_PRIVATE_KEY (ASCII-armored secret key),
-#                 APT_GPG_PASSPHRASE (its passphrase, if any).
+# Env: APT_GPG_PRIVATE_KEY (ASCII-armored secret key) is REQUIRED - the
+#      repository is always signed and the script exits if the key is
+#      missing. APT_GPG_PASSPHRASE (its passphrase, if any) is optional.
 set -euo pipefail
 
 if [ "$#" -lt 3 ]; then
@@ -14,6 +15,9 @@ SITE=$1
 VERSION=$2
 shift 2
 DEBS=("$@")
+
+# Signing is mandatory - fail fast before doing any work.
+: "${APT_GPG_PRIVATE_KEY:?APT_GPG_PRIVATE_KEY is required (ASCII-armored secret key); refusing to build an unsigned repository}"
 
 mkdir -p "$SITE"
 SITE=$(cd "$SITE" && pwd)
@@ -70,45 +74,37 @@ sudo apt update &amp;&amp; sudo apt install litellm
 </body></html>
 HTML
 
-if [ -n "${APT_GPG_PRIVATE_KEY:-}" ]; then
-    GNUPGHOME=$(mktemp -d)
-    export GNUPGHOME
-    chmod 700 "$GNUPGHOME"
-    cleanup_gpg() {
-        gpgconf --kill all >/dev/null 2>&1 || true
-        find "$GNUPGHOME" -type f -exec shred -u {} + 2>/dev/null || true
-        rm -rf "$GNUPGHOME"
-    }
-    trap cleanup_gpg EXIT
-    gpg-agent --homedir "$GNUPGHOME" --allow-loopback-pinentry --daemon \
-        >"$GNUPGHOME/agent.log" 2>&1 </dev/null || true
+# Sign the repository (mandatory - the key was validated above).
+GNUPGHOME=$(mktemp -d)
+export GNUPGHOME
+chmod 700 "$GNUPGHOME"
+cleanup_gpg() {
+    gpgconf --kill all >/dev/null 2>&1 || true
+    find "$GNUPGHOME" -type f -exec shred -u {} + 2>/dev/null || true
+    rm -rf "$GNUPGHOME"
+}
+trap cleanup_gpg EXIT
+gpg-agent --homedir "$GNUPGHOME" --allow-loopback-pinentry --daemon \
+    >"$GNUPGHOME/agent.log" 2>&1 </dev/null || true
 
-    printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
-    FPR=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr:/ {print $10; exit}')
-    [ -n "$FPR" ] || { echo "no secret key imported" >&2; exit 1; }
+printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+FPR=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr:/ {print $10; exit}')
+[ -n "$FPR" ] || { echo "no secret key imported" >&2; exit 1; }
 
-    GPG_SIGN=(gpg --batch --yes --pinentry-mode loopback --local-user "$FPR")
-    if [ -n "${APT_GPG_PASSPHRASE:-}" ]; then
-        GPG_SIGN+=(--passphrase-fd 0)
-        sign() { printf '%s' "$APT_GPG_PASSPHRASE" | "${GPG_SIGN[@]}" "$@"; }
-    else
-        sign() { "${GPG_SIGN[@]}" "$@" </dev/null; }
-    fi
-    sign --clearsign -o "$DIST/InRelease" "$DIST/Release"
-    sign --detach-sign --armor -o "$DIST/Release.gpg" "$DIST/Release"
-
-    gpg --batch --armor --export "$FPR" > "$SITE/litellm-archive-keyring.asc"
-    # apt accepts armored keys in signed-by files when named .asc; also ship a
-    # binary keyring under .gpg for the documented install path
-    gpg --batch --export "$FPR" > "$SITE/litellm-archive-keyring.gpg"
-    echo "signed repository with key $FPR"
+GPG_SIGN=(gpg --batch --yes --pinentry-mode loopback --local-user "$FPR")
+if [ -n "${APT_GPG_PASSPHRASE:-}" ]; then
+    GPG_SIGN+=(--passphrase-fd 0)
+    sign() { printf '%s' "$APT_GPG_PASSPHRASE" | "${GPG_SIGN[@]}" "$@"; }
 else
-    cat >&2 <<'WARN'
-################################################################
-# WARNING: APT_GPG_PRIVATE_KEY is not set.                     #
-# The repository is UNSIGNED. Clients must use [trusted=yes].  #
-################################################################
-WARN
+    sign() { "${GPG_SIGN[@]}" "$@" </dev/null; }
 fi
+sign --clearsign -o "$DIST/InRelease" "$DIST/Release"
+sign --detach-sign --armor -o "$DIST/Release.gpg" "$DIST/Release"
+
+gpg --batch --armor --export "$FPR" > "$SITE/litellm-archive-keyring.asc"
+# apt accepts armored keys in signed-by files when named .asc; also ship a
+# binary keyring under .gpg for the documented install path
+gpg --batch --export "$FPR" > "$SITE/litellm-archive-keyring.gpg"
+echo "signed repository with key $FPR"
 
 echo "apt repository ready in $SITE (archs: ${ARCHS[*]})"

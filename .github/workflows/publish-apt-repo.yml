@@ -1,0 +1,105 @@
+name: publish-apt-repo
+
+# Reusable step that publishes the apt repository: it takes an existing GitHub
+# release, downloads its .deb assets, rebuilds the signed apt repository from
+# them, and deploys it to GitHub Pages.
+#
+# Entry points:
+#   1. Called from litellm-deb.yml (after build + release) - the normal
+#      weekly flow.
+#   2. workflow_dispatch (manual) - republish an existing version, e.g. after a
+#      failed deploy. Leave the version input empty to publish the latest
+#      release.
+#
+# This is the single place the Pages deploy logic lives; litellm-deb.yml only
+# calls it. Publishing always mirrors the release, so the repository never
+# drifts from what is downloadable as a release asset.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "litellm version to publish (e.g. 1.109.1)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "litellm version to publish (empty = latest release)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialises standalone/manual publishes. Uses a different group than the
+# top-level `apt-repo` group in litellm-deb.yml on purpose: sharing a group
+# with the caller would make the called run wait on a slot the calling run
+# already holds (deadlock).
+concurrency:
+  group: apt-repo-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          V="${{ inputs.version }}"
+          if [ -z "$V" ]; then
+            echo "no version input; using latest release"
+            V=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          fi
+          V="${V#v}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "publishing version $V"
+
+      - name: Install repo tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev apt-utils
+
+      - name: Download debs from release
+        run: |
+          set -euo pipefail
+          V="${{ steps.version.outputs.version }}"
+          echo "downloading release v$V ..."
+          gh release download "v$V" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.deb' --dir dist
+          ls -l dist
+
+      - name: Verify debs
+        run: |
+          set -euo pipefail
+          for deb in dist/*.deb; do
+            echo "== $deb =="
+            dpkg-deb --info "$deb"
+            dpkg-deb --contents "$deb"
+          done
+
+      - name: Build apt repository
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.version.outputs.version }}"
+          build/build-apt-repo.sh site "$V" dist/*.deb
+          ls -lR site/dists
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v5

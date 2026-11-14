@@ -34,8 +34,8 @@ machine needs internet access during installation.
    gpg --armor --export-secret-keys <fpr>
    ```
    Add the output as the repository secret `APT_GPG_PRIVATE_KEY`; if the key has a passphrase,
-   add it as `APT_GPG_PASSPHRASE`. Without a key the repository is published unsigned, and
-   clients must use `deb [trusted=yes] ...` instead of `signed-by`.
+   add it as `APT_GPG_PASSPHRASE`. The key is required: without it the build fails instead of
+   publishing an unsigned repository, so clients always pin the archive with `signed-by`.
 3. Run the workflow once by hand (Actions → litellm-deb → Run workflow).
 
 ## How the weekly build works
@@ -43,9 +43,13 @@ machine needs internet access during installation.
 - Runs Mondays at 06:00 UTC (and on demand).
 - Reads the latest version from PyPI; if release `v<version>` already exists, it logs
   "no new litellm, skipping" and stops.
-- Otherwise it downloads the `cp310-abi3-manylinux_2_28` wheels for aarch64 and x86_64, checks them,
-  builds `litellm_<version>-1_arm64.deb` and `..._amd64.deb`, creates the GitHub Release
-  `v<version>` with both debs, and redeploys the apt repository.
+- Otherwise it downloads the `cp310-abi3-manylinux_2_28` wheels for aarch64 and x86_64, checks
+  them, builds `litellm_<version>-1_arm64.deb` and `..._amd64.deb`, and creates the GitHub
+  Release `v<version>` with both debs.
+- Afterwards the reusable `publish-apt-repo` workflow downloads the debs from that release,
+  rebuilds the GPG-signed apt repository, and deploys it to GitHub Pages. It can also be
+  dispatched by hand (Actions → publish-apt-repo → Run workflow) to republish an existing
+  version — e.g. after a failed deploy — so the publish logic lives in exactly one place.
 - GitHub Releases keep every version. The apt repository holds only the latest one, so
   downgrading through apt is not possible; download an older deb from Releases instead.
 
