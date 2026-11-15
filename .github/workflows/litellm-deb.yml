@@ -39,8 +39,9 @@ jobs:
                                + r"[-_]cp310-abi3-manylinux_2_28_(aarch64|x86_64)\.whl$")
           found = set()
           for f in data["urls"]:
-              if pattern.match(f["filename"]):
-                  found.add(f["filename"].rsplit(".", 2)[0].rsplit("_", 1)[1])
+              m = pattern.match(f["filename"])
+              if m:
+                  found.add(m.group(1))
           missing = {"aarch64", "x86_64"} - found
           if missing:
               sys.exit(f"litellm {version}: missing manylinux_2_28 wheel(s): {sorted(missing)}")
