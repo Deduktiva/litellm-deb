@@ -146,12 +146,15 @@ jobs:
                    ./usr/bin/litellm \
                    ./opt/litellm/venv/bin/litellm \
                    ./opt/litellm/venv/lib/python3.13/site-packages/litellm/__init__.py; do
-            echo "$contents" | grep -q " ${f}$" || { echo "missing in $deb: $f"; exit 1; }
+            # herestring, not a pipe: with pipefail, grep -q closing the
+            # pipe early SIGPIPEs the echo of the (large) listing
+            grep -q " ${f}$" <<< "$contents" || { echo "missing in $deb: $f"; exit 1; }
           done
           # the shipped venv must be self-contained: no pipx, no pip
-          echo "$contents" | grep -q 'pipx' && { echo "pipx trace in $deb"; exit 1; }
-          echo "$contents" | grep -q 'venv/bin/pip' && { echo "pip shipped in $deb"; exit 1; }
-          n=$(echo "$contents" | wc -l)
+          # (herestrings, as above: pipefail + grep -q = false SIGPIPE)
+          grep -q 'pipx' <<< "$contents" && { echo "pipx trace in $deb"; exit 1; }
+          grep -q 'venv/bin/pip' <<< "$contents" && { echo "pip shipped in $deb"; exit 1; }
+          n=$(wc -l <<< "$contents")
           [ "$n" -gt 500 ] || { echo "suspiciously few files in $deb: $n"; exit 1; }
           echo "$deb: $n files, ok"
           tmp=$(mktemp -d)
