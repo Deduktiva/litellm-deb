@@ -134,10 +134,14 @@ jobs:
           test "$(dpkg-deb -f "$deb" Architecture)" = "$ARCH"
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION}-1"
           test "$(dpkg-deb -f "$deb" Depends)" = "python3, python3.13, systemd"
+          # The metadata files live in the control member, which
+          # dpkg-deb --contents does not list, so check them via --info
+          for f in control conffiles postinst prerm postrm; do
+            dpkg-deb --info "$deb" "$f" >/dev/null \
+              || { echo "missing in $deb: DEBIAN/$f"; exit 1; }
+          done
           contents=$(dpkg-deb --contents "$deb")
-          for f in ./DEBIAN/conffiles ./DEBIAN/control ./DEBIAN/postinst \
-                   ./DEBIAN/postrm ./DEBIAN/prerm \
-                   ./etc/litellm/config.yaml ./etc/litellm/litellm.env \
+          for f in ./etc/litellm/config.yaml ./etc/litellm/litellm.env \
                    ./lib/systemd/system/litellm.service \
                    ./usr/bin/litellm \
                    ./opt/litellm/venv/bin/litellm \
