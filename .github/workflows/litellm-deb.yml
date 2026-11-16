@@ -16,7 +16,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  # Resolve the version once and decide whether there is anything to build.
+  # No architecture-specific work, so it runs on a regular x64 runner.
+  check:
     runs-on: ubuntu-24.04
     outputs:
       built: ${{ steps.result.outputs.built }}
@@ -62,115 +64,130 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install build tools
-        if: steps.skip.outputs.skip == 'false'
-        run: sudo apt-get update && sudo apt-get install -y dpkg-dev python3-pip
-
-      # Full dependency closure per architecture, downloaded cross-platform
-      # by the native runner pip. This is the only step that needs PyPI.
-      - name: Download wheel closures
-        if: steps.skip.outputs.skip == 'false'
-        run: |
-          set -euo pipefail
-          build/download-wheels.sh "$VERSION" arm64 build/wheels-arm64
-          build/download-wheels.sh "$VERSION" amd64 build/wheels-amd64
-
-      # The venv must be built by Debian 13's python3.13, so both debs are
-      # assembled inside debian:trixie containers; the arm64 one runs under
-      # qemu (preinstalled on the runner). The install step in the container
-      # is --no-index, i.e. offline.
-      - name: Build debs in Debian 13 containers
-        if: steps.skip.outputs.skip == 'false'
-        run: |
-          set -euo pipefail
-          for arch in arm64 amd64; do
-            [ "$arch" = arm64 ] && platform=linux/arm64 || platform=linux/amd64
-            docker run --rm --platform "$platform" \
-              -v "$PWD/build:/w:ro" -v "$PWD/dist:/out" \
-              -e VERSION="$VERSION" -e ARCH="$arch" \
-              debian:trixie bash -c '
-                set -euo pipefail
-                apt-get update
-                apt-get install -y --no-install-recommends python3 python3-venv dpkg-dev
-                /w/make-venv.sh "$VERSION" "/w/wheels-${ARCH}" "/tmp/litellm-venv"
-                /w/build-deb.sh "$VERSION" "$ARCH" "/tmp/litellm-venv" /out
-              '
-          done
-          echo "$VERSION" > dist/version.txt
-
-      - name: Verify debs
-        if: steps.skip.outputs.skip == 'false'
-        run: |
-          set -euo pipefail
-          for arch in arm64 amd64; do
-            deb="dist/litellm_${VERSION}-1_${arch}.deb"
-            test "$(dpkg-deb -f "$deb" Architecture)" = "$arch"
-            test "$(dpkg-deb -f "$deb" Version)" = "${VERSION}-1"
-            test "$(dpkg-deb -f "$deb" Depends)" = "python3, python3.13, systemd"
-            contents=$(dpkg-deb --contents "$deb")
-            for f in ./DEBIAN/conffiles ./DEBIAN/control ./DEBIAN/postinst \
-                     ./DEBIAN/postrm ./DEBIAN/prerm \
-                     ./etc/litellm/config.yaml ./etc/litellm/litellm.env \
-                     ./lib/systemd/system/litellm.service \
-                     ./usr/bin/litellm \
-                     ./opt/litellm/venv/bin/litellm \
-                     ./opt/litellm/venv/lib/python3.13/site-packages/litellm/__init__.py; do
-              echo "$contents" | grep -q " ${f}$" || { echo "missing in $deb: $f"; exit 1; }
-            done
-            # the shipped venv must be self-contained: no pipx, no pip
-            echo "$contents" | grep -q 'pipx' && { echo "pipx trace in $deb"; exit 1; }
-            echo "$contents" | grep -q 'venv/bin/pip' && { echo "pip shipped in $deb"; exit 1; }
-            n=$(echo "$contents" | wc -l)
-            [ "$n" -gt 500 ] || { echo "suspiciously few files in $deb: $n"; exit 1; }
-            echo "$deb: $n files, ok"
-          done
-          tmp=$(mktemp -d)
-          dpkg-deb -R "dist/litellm_${VERSION}-1_amd64.deb" "$tmp"
-          for s in postinst prerm postrm; do sh -n "$tmp/DEBIAN/$s"; done
-          rm -rf "$tmp"
-
-      # End-to-end: install each deb in a fresh Debian 13 container (no
-      # network needed for the install itself) and run the entry point.
-      - name: Smoke test (dpkg -i in Debian 13)
-        if: steps.skip.outputs.skip == 'false'
-        run: |
-          set -euo pipefail
-          for arch in arm64 amd64; do
-            [ "$arch" = arm64 ] && platform=linux/arm64 || platform=linux/amd64
-            docker run --rm --platform "$platform" \
-              -v "$PWD/dist:/d:ro" \
-              -e VERSION="$VERSION" -e ARCH="$arch" \
-              debian:trixie bash -c '
-                set -euo pipefail
-                apt-get update
-                apt-get install -y --no-install-recommends python3 python3.13 systemd
-                dpkg -i "/d/litellm_${VERSION}-1_${ARCH}.deb"
-                litellm --version
-                dpkg -V litellm
-                echo "smoke test ok ($ARCH)"
-              '
-          done
-
-      - uses: actions/upload-artifact@v7
-        if: steps.skip.outputs.skip == 'false'
-        with:
-          name: debs
-          path: |
-            dist/*.deb
-            dist/version.txt
-          if-no-files-found: error
-
       - name: Result
         id: result
         run: echo "built=${{ steps.skip.outputs.skip == 'false' }}" >> "$GITHUB_OUTPUT"
 
+  # One job per architecture, each on a native runner. The venv must be
+  # built by the target architecture's python3, and an arm64 container
+  # cannot exec on an amd64 runner: GitHub-hosted runners have no
+  # qemu/binfmt (the old "qemu preinstalled" comment was wrong, the
+  # failure mode is "exec format error"). The wheel closure is
+  # architecture-specific but downloaded cross-platform by the native
+  # runner's pip (--platform), so nothing has to cross-build.
+  build:
+    needs: check
+    if: needs.check.outputs.built == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm # native arm64, free for public repos
+          - arch: amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.check.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev python3-pip
+
+      # Full dependency closure for this architecture, downloaded
+      # cross-platform by the native runner pip. This is the only step
+      # that needs PyPI.
+      - name: Download wheel closure
+        run: build/download-wheels.sh "$VERSION" "$ARCH" "build/wheels-$ARCH"
+
+      # The venv must be built by Debian 13's python3.13, so the deb is
+      # assembled inside a debian:trixie container on this (matching)
+      # runner. The install step in the container is --no-index, i.e.
+      # offline.
+      - name: Build deb in Debian 13 container
+        run: |
+          set -euo pipefail
+          [ "$ARCH" = arm64 ] && platform=linux/arm64 || platform=linux/amd64
+          docker run --rm --platform "$platform" \
+            -v "$PWD/build:/w:ro" -v "$PWD/dist:/out" \
+            -e VERSION="$VERSION" -e ARCH="$ARCH" \
+            debian:trixie bash -c '
+              set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends python3 python3-venv dpkg-dev
+              /w/make-venv.sh "$VERSION" "/w/wheels-${ARCH}" "/tmp/litellm-venv"
+              /w/build-deb.sh "$VERSION" "$ARCH" "/tmp/litellm-venv" /out
+            '
+          echo "$VERSION" > dist/version.txt
+
+      - name: Verify deb
+        run: |
+          set -euo pipefail
+          deb="dist/litellm_${VERSION}-1_${ARCH}.deb"
+          test "$(dpkg-deb -f "$deb" Architecture)" = "$ARCH"
+          test "$(dpkg-deb -f "$deb" Version)" = "${VERSION}-1"
+          test "$(dpkg-deb -f "$deb" Depends)" = "python3, python3.13, systemd"
+          contents=$(dpkg-deb --contents "$deb")
+          for f in ./DEBIAN/conffiles ./DEBIAN/control ./DEBIAN/postinst \
+                   ./DEBIAN/postrm ./DEBIAN/prerm \
+                   ./etc/litellm/config.yaml ./etc/litellm/litellm.env \
+                   ./lib/systemd/system/litellm.service \
+                   ./usr/bin/litellm \
+                   ./opt/litellm/venv/bin/litellm \
+                   ./opt/litellm/venv/lib/python3.13/site-packages/litellm/__init__.py; do
+            echo "$contents" | grep -q " ${f}$" || { echo "missing in $deb: $f"; exit 1; }
+          done
+          # the shipped venv must be self-contained: no pipx, no pip
+          echo "$contents" | grep -q 'pipx' && { echo "pipx trace in $deb"; exit 1; }
+          echo "$contents" | grep -q 'venv/bin/pip' && { echo "pip shipped in $deb"; exit 1; }
+          n=$(echo "$contents" | wc -l)
+          [ "$n" -gt 500 ] || { echo "suspiciously few files in $deb: $n"; exit 1; }
+          echo "$deb: $n files, ok"
+          tmp=$(mktemp -d)
+          dpkg-deb -R "$deb" "$tmp"
+          for s in postinst prerm postrm; do sh -n "$tmp/DEBIAN/$s"; done
+          rm -rf "$tmp"
+
+      # End-to-end: install the deb in a fresh Debian 13 container (no
+      # network needed for the install itself) and run the entry point.
+      - name: Smoke test (dpkg -i in Debian 13)
+        run: |
+          set -euo pipefail
+          [ "$ARCH" = arm64 ] && platform=linux/arm64 || platform=linux/amd64
+          docker run --rm --platform "$platform" \
+            -v "$PWD/dist:/d:ro" \
+            -e VERSION="$VERSION" -e ARCH="$ARCH" \
+            debian:trixie bash -c '
+              set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends python3 python3.13 systemd
+              dpkg -i "/d/litellm_${VERSION}-1_${ARCH}.deb"
+              litellm --version
+              dpkg -V litellm
+              echo "smoke test ok ($ARCH)"
+            '
+
+      # Both matrix legs upload into one artifact (upload-artifact v4+
+      # merges same-name uploads), so the release downloads both debs.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: debs
+          path: |
+            dist/litellm_${{ needs.check.outputs.version }}-1_${{ matrix.arch }}.deb
+            dist/version.txt
+          if-no-files-found: error
+
   release:
-    needs: build
-    if: needs.build.outputs.built == 'true'
+    needs: [check, build]
+    if: needs.check.outputs.built == 'true'
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -180,6 +197,9 @@ jobs:
         run: |
           set -euo pipefail
           [ -f dist/version.txt ] || { echo "version.txt missing from artifact"; exit 1; }
+          # a release must carry both architectures
+          count=$(ls dist/*.deb 2>/dev/null | wc -l)
+          [ "$count" -eq 2 ] || { echo "expected 2 debs in dist, found $count"; exit 1; }
           gh release create "v$VERSION" dist/*.deb \
             --repo "$GITHUB_REPOSITORY" \
             --title "litellm $VERSION" \
@@ -192,9 +212,9 @@ jobs:
   # republish an existing version. Runs after release so it always mirrors
   # the release assets.
   apt-repo:
-    needs: [build, release]
-    if: needs.build.outputs.built == 'true'
+    needs: [check, release]
+    if: needs.check.outputs.built == 'true'
     uses: ./.github/workflows/publish-apt-repo.yml
     secrets: inherit
     with:
-      version: ${{ needs.build.outputs.version }}
+      version: ${{ needs.check.outputs.version }}

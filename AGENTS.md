@@ -18,9 +18,12 @@ arm64, and publishes them weekly as GitHub Releases and a signed apt repository 
   offline install). `Depends:` is `python3, python3.13, systemd`; `ExecStart` runs the
   venv entry point directly. No pipx, no PyPI access at install time, all
   venv files dpkg-tracked (`/var/lib/dpkg/info/litellm.list`, `dpkg -V`
-  works). The CI assembles both debs inside `debian:trixie` containers
-  (arm64 under qemu) and smoke-tests them with a real `dpkg -i` in a fresh
-  trixie container.
+  works). CI assembles each deb inside a `debian:trixie` container on a
+  native runner of that architecture (arm64 on `ubuntu-24.04-arm`, amd64 on
+  `ubuntu-24.04`) and smoke-tests it with a real `dpkg -i` in a fresh trixie
+  container. GitHub runners have no qemu/binfmt: a cross-arch container dies
+  with "exec format error", so never run an arm64 container on an amd64
+  runner (or vice versa).
 - The manylinux tag list in `download-wheels.sh` is deliberate and capped at
   `manylinux_2_41` (trixie's glibc 2.41): pip's `--platform` does not expand
   tags downward, and a dep tagged above 2_41 must fail the build instead of
