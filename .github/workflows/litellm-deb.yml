@@ -183,11 +183,13 @@ jobs:
               echo "smoke test ok ($ARCH)"
             '
 
-      # Both matrix legs upload into one artifact (upload-artifact v4+
-      # merges same-name uploads), so the release downloads both debs.
+      # One artifact per matrix leg: v4+ artifacts are immutable, so two
+      # parallel uploads with the same name race and only one leg's deb
+      # survives — a release must carry both architectures. The release
+      # job downloads them back together with pattern + merge-multiple.
       - uses: actions/upload-artifact@v7
         with:
-          name: debs
+          name: debs-${{ matrix.arch }}
           path: |
             dist/litellm_${{ needs.check.outputs.version }}-1_${{ matrix.arch }}.deb
             dist/version.txt
@@ -203,8 +205,9 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: debs
           path: dist
+          pattern: debs-*
+          merge-multiple: true
       - name: Create GitHub release
         run: |
           set -euo pipefail
