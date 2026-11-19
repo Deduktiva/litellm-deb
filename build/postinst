@@ -8,13 +8,6 @@ if ! getent passwd litellm >/dev/null; then
         --shell /usr/sbin/nologin litellm
 fi
 
-# Remove the pipx layout of the previous package generations on upgrade:
-# the venv under /opt/litellm/venv is installed by dpkg itself now, and the
-# vendored wheel in /usr/share/litellm is gone.
-rm -rf /opt/litellm/venvs /opt/litellm/bin /opt/litellm/packages \
-    /opt/litellm/manifest.json /opt/litellm/installed*.json \
-    /usr/share/litellm
-
 chown -R litellm:litellm /opt/litellm
 
 if [ -d /run/systemd/system ]; then
