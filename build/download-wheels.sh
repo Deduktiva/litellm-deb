@@ -1,5 +1,5 @@
 #!/bin/bash
-# Download the full litellm[proxy] wheel closure for one target architecture
+# Download the full litellm[proxy,extra_proxy,saml,healthcheck] wheel closure for one target architecture
 # from PyPI. Network access is needed here (and only here); everything after
 # this step is offline.
 # Target: Debian 13 (trixie, glibc 2.41), CPython 3.13.
@@ -40,7 +40,7 @@ for p in "${PLATS[@]}"; do
     ARGS+=(--platform "$p")
 done
 
-"$PYTHON" -m pip download "litellm[proxy]==${VERSION}" \
+"$PYTHON" -m pip download "litellm[proxy,extra_proxy,saml,healthcheck]==${VERSION}" \
     --dest "$DEST" \
     --only-binary=:all: \
     --python-version 313 \

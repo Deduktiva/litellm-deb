@@ -29,7 +29,8 @@ rm -rf "$VENV"
 
 # The venv's own pip performs this offline install only; it is uninstalled
 # again below so the deb ships no package manager.
-"$VENV/bin/pip" install --no-index --find-links "$WHEELS" "litellm[proxy]==${VERSION}"
+"$VENV/bin/pip" install --no-index --find-links "$WHEELS" \
+    "litellm[proxy,extra_proxy,saml,healthcheck]==${VERSION}"
 
 # Smoke test: the entry point must run against this venv.
 "$VENV/bin/litellm" --version

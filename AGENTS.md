@@ -14,7 +14,7 @@ arm64, and publishes them weekly as GitHub Releases and a signed apt repository 
   (needs Debian 13's `python3-venv` — the interpreter must be the target's
   3.13), then `build/build-deb.sh <version> <arch> <venv-dir> dist`.
 - Current build (2026-11-14): the deb ships a **complete venv** at
-  `/opt/litellm/venv` (litellm[proxy] + all deps; pip removed again after the
+  `/opt/litellm/venv` (litellm[proxy,extra_proxy,saml,healthcheck] + all deps; pip removed again after the
   offline install). `Depends:` is `python3, python3.13, systemd`; `ExecStart` runs the
   venv entry point directly. No pipx, no PyPI access at install time, all
   venv files dpkg-tracked (`/var/lib/dpkg/info/litellm.list`, `dpkg -V`
@@ -46,7 +46,7 @@ arm64, and publishes them weekly as GitHub Releases and a signed apt repository 
 
 - Maintainer scripts are POSIX sh with `set -e` (dpkg runs them with /bin/sh); build scripts are
   bash with `set -euo pipefail`.
-- The venv is built with the `[proxy]` extra: the bare litellm CLI exits with
+- The venv is built with the `proxy`, `extra_proxy`, `saml` and `healthcheck` extras: the bare litellm CLI exits with
   "Missing dependency ... websockets".
 - pip's `--platform` matches the exact PEP 600 tag (no downward expansion):
   `download-wheels.sh` passes one flag per manylinux generation

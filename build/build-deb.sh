@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build the litellm .deb for one architecture from a ready venv.
-# The venv (see make-venv.sh) contains litellm[proxy] and every dependency,
+# The venv (see make-venv.sh) contains litellm[proxy,extra_proxy,saml,healthcheck] and every dependency,
 # so installing the deb is fully offline; dpkg tracks all of its files.
 # Usage: build-deb.sh <version> <arch> <venv-dir> <out-dir>
 set -euo pipefail
