@@ -8,8 +8,10 @@ FROM owncore-devenv:latest
 # gnupg2: gpg + gpg-agent for signing the repository (build-apt-repo.sh);
 # python3 + python3-venv + python3-pip: building the packaged venv and the
 # cross-platform wheel downloads (the image must stay on Debian 13, whose
-# python3 is 3.13 — the venv interpreter shipped in the deb).
+# python3 is 3.13 — the venv interpreter shipped in the deb);
+# nodejs + npm: build-time only, running `prisma generate` (build/
+# generate-prisma.sh bakes the Prisma client + query engines into the venv).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       dpkg-dev apt-utils gnupg2 python3 python3-venv python3-pip \
+       dpkg-dev apt-utils gnupg2 python3 python3-venv python3-pip nodejs npm \
     && rm -rf /var/lib/apt/lists/*

@@ -28,7 +28,11 @@ needs **no network access** — no PyPI, no pip, no pipx — and dpkg tracks
 `dpkg -V litellm` works and an upgrade replaces the whole tree cleanly.
 
 - `/usr/bin/litellm` — launcher (symlink into the venv)
-- `/opt/litellm/venv/` — the venv (installed by dpkg, no pip inside)
+- `/opt/litellm/venv/` — the venv (installed by dpkg, no pip inside), with
+  the generated Prisma client baked in
+- `/opt/litellm/prisma/binaries/` — Prisma query-engine binaries + the Node
+  prisma CLI (built-in by `prisma generate` at build time; used for the
+  startup migration diff, hence the `nodejs` dependency)
 - `/etc/litellm/config.yaml` — proxy config, pointing at vLLM
   (`http://127.0.0.1:30000/v1`, model `qwen`)
 - `/etc/litellm/litellm.env` — environment, e.g. `LITELLM_MASTER_KEY`
@@ -97,9 +101,12 @@ GitHub Actions (weekly 18:42 Europe/Vienna + manual dispatch)
   4. in a debian:trixie container (arm64 under qemu):
      create the venv with python3.13, install the closure offline
      (--no-index --find-links), smoke-test the entry point, strip pip,
+     bake the Prisma client in (`prisma generate`, the only other network
+     access — the wheels ship the schema but not the generated client),
      assemble the .deb (dpkg-deb)
   5. verify: metadata, key paths, no pip/pipx in the deb, and an
-     end-to-end dpkg -i + litellm --version in a fresh trixie container
+     end-to-end dpkg -i + litellm --version + Prisma round-trip against a
+     real PostgreSQL in a fresh trixie container
   6. GitHub release v<version> with both .debs
   7. rebuild dists/ + pool/ from the release, sign with the repo key,
      deploy to GitHub Pages
@@ -111,6 +118,7 @@ GitHub Actions (weekly 18:42 Europe/Vienna + manual dispatch)
 |---|---|
 | `download-wheels.sh` | `pip download` of the full closure for one arch (offline afterwards) |
 | `make-venv.sh` | venv creation + offline `pip install --no-index` + entry-point smoke test |
+| `generate-prisma.sh` | `prisma generate`: bakes the generated Prisma client into the venv and the query-engine + Node CLI binaries into `/opt/litellm/prisma/binaries` (needs nodejs+npm, network) |
 | `build-deb.sh` | assembles the .deb from the venv (layout, control, conffiles) |
 | `control.template` | package metadata |
 | `postinst` / `prerm` / `postrm` | user, service enable/start/stop, cleanup |
@@ -130,9 +138,11 @@ quietly downloading an unusable wheel.
 ## Test locally
 
 ```sh
-# build one architecture (needs Debian 13 for make-venv.sh):
+# build one architecture (needs Debian 13 for make-venv.sh, nodejs+npm for
+# generate-prisma.sh):
 build/download-wheels.sh 1.109.1 amd64 build/wheels-amd64
 build/make-venv.sh 1.109.1 build/wheels-amd64 build/venv-amd64
+build/generate-prisma.sh build/venv-amd64
 build/build-deb.sh 1.109.1 amd64 build/venv-amd64 dist
 dpkg -i dist/litellm_1.109.1-1_amd64.deb && litellm --version && dpkg -V litellm
 
@@ -142,7 +152,8 @@ cd site && python3 -m http.server 8000   # inspect
 ```
 
 The devcontainer for this (Debian 13 + dpkg-dev + apt-utils + gnupg2 +
-python3-venv) is defined in `Dockerfile.dev` / `.owncore/devenv.yml`.
+python3-venv + nodejs/npm) is defined in `Dockerfile.dev` /
+`.owncore/devenv.yml`.
 
 ## Repository
 

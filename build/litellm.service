@@ -6,6 +6,16 @@ Wants=network-online.target
 
 [Service]
 User=litellm
+# The startup prisma migration diff uses the relative path ./schema.prisma;
+# the wheel ships it in the proxy package, so point cwd there.
+WorkingDirectory=/opt/litellm/venv/lib/python3.13/site-packages/litellm/proxy
+# The prisma client was generated at build time into the venv, and its query
+# engine binaries live at the location the generated client embeds as absolute
+# paths. PRISMA_OFFLINE_MODE keeps the runtime from ever trying to download
+# engines or the CLI (everything ships in the deb).
+Environment=PRISMA_BINARY_CACHE_DIR=/opt/litellm/prisma/binaries
+Environment=PRISMA_CLI_QUERY_ENGINE_TYPE=binary
+Environment=PRISMA_OFFLINE_MODE=true
 EnvironmentFile=-/etc/litellm/litellm.env
 ExecStart=/opt/litellm/venv/bin/litellm --config /etc/litellm/config.yaml --host 127.0.0.1 --port 4000
 Restart=on-failure

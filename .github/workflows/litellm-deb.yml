@@ -121,8 +121,11 @@ jobs:
             debian:trixie bash -c '
               set -euo pipefail
               apt-get update
-              apt-get install -y --no-install-recommends python3 python3-venv dpkg-dev
+              # nodejs+npm: build-time only, for generate-prisma.sh (bakes the
+              # Prisma client + query engines into the venv and its binary dir)
+              apt-get install -y --no-install-recommends python3 python3-venv dpkg-dev nodejs npm
               /w/make-venv.sh "$VERSION" "/w/wheels-${ARCH}" "/tmp/litellm-venv"
+              /w/generate-prisma.sh "/tmp/litellm-venv"
               /w/build-deb.sh "$VERSION" "$ARCH" "/tmp/litellm-venv" /out
             '
           echo "$VERSION" > dist/version.txt
@@ -133,7 +136,7 @@ jobs:
           deb="dist/litellm_${VERSION}-1_${ARCH}.deb"
           test "$(dpkg-deb -f "$deb" Architecture)" = "$ARCH"
           test "$(dpkg-deb -f "$deb" Version)" = "${VERSION}-1"
-          test "$(dpkg-deb -f "$deb" Depends)" = "python3, python3.13, systemd"
+          test "$(dpkg-deb -f "$deb" Depends)" = "python3, python3.13, systemd, nodejs"
           # The metadata files live in the control member, which
           # dpkg-deb --contents does not list, so check them via --info
           for f in control conffiles postinst prerm postrm; do
@@ -145,7 +148,9 @@ jobs:
                    ./lib/systemd/system/litellm.service \
                    ./usr/bin/litellm \
                    ./opt/litellm/venv/bin/litellm \
-                   ./opt/litellm/venv/lib/python3.13/site-packages/litellm/__init__.py; do
+                   ./opt/litellm/venv/lib/python3.13/site-packages/litellm/__init__.py \
+                   ./opt/litellm/venv/lib/python3.13/site-packages/prisma/client.py \
+                   ./opt/litellm/prisma/binaries/node_modules/prisma/build/index.js; do
             # herestring, not a pipe: with pipefail, grep -q closing the
             # pipe early SIGPIPEs the echo of the (large) listing.
             # The name is the last field for regular files, but for
@@ -176,10 +181,34 @@ jobs:
             debian:trixie bash -c '
               set -euo pipefail
               apt-get update
-              apt-get install -y --no-install-recommends python3 python3.13 systemd
+              # nodejs is a runtime Depends (startup prisma migration diff);
+              # postgresql only exercises the generated Prisma client end to end
+              apt-get install -y --no-install-recommends python3 python3.13 systemd nodejs postgresql
               dpkg -i "/d/litellm_${VERSION}-1_${ARCH}.deb"
               litellm --version
               dpkg -V litellm
+              # The packaged Prisma client must talk to a real database without
+              # any network access: engine binary + generated client are baked.
+              service postgresql start
+              # Base64 payloads: this whole script is single-quoted for
+              # bash -c, so it must not contain a single quote character.
+              echo Q1JFQVRFIFJPTEUgbGl0ZWxsbSBMT0dJTiBQQVNTV09SRCAnbGl0ZWxsbSc7CkNSRUFURSBEQVRBQkFTRSBsaXRlbGxtIE9XTkVSIGxpdGVsbG07Cg== \
+                | base64 -d > /tmp/init.sql
+              su -s /bin/sh postgres -c "psql -f /tmp/init.sql"
+              # The packaged Prisma client must talk to a real database without
+              # any network access: engine binary + generated client are baked.
+              echo aW1wb3J0IGFzeW5jaW8sIG9zCmZyb20gcHJpc21hIGltcG9ydCBQcmlzbWEKYXN5bmMgZGVmIG1haW4oKToKICAgIHAgPSBQcmlzbWEoKQogICAgYXdhaXQgcC5jb25uZWN0KCkKICAgIHJvd3MgPSBhd2FpdCBwLnF1ZXJ5X3JhdygnU0VMRUNUIDEgQVMgb2snKQogICAgYXNzZXJ0IHJvd3NbMF1bJ29rJ10gPT0gMSwgcm93cwogICAgYXdhaXQgcC5kaXNjb25uZWN0KCkKYXN5bmNpby5ydW4obWFpbigpKQo= \
+                | base64 -d > /tmp/prisma-check.py
+              DATABASE_URL="postgresql://litellm:litellm@127.0.0.1:5432/litellm" \
+              /opt/litellm/venv/bin/python /tmp/prisma-check.py
+              # The Node prisma CLI (used for the startup migration diff) must
+              # run from the shipped binary dir, offline.
+              cd /opt/litellm/venv/lib/python3.13/site-packages/litellm/proxy
+              PRISMA_BINARY_CACHE_DIR=/opt/litellm/prisma/binaries \
+              PRISMA_OFFLINE_MODE=true /opt/litellm/venv/bin/prisma migrate diff \
+                --from-empty --to-schema-datamodel ./schema.prisma --script \
+                > /tmp/migrate-diff.sql
+              grep -q "CREATE TABLE \"LiteLLM_ProxyModelTable\"" /tmp/migrate-diff.sql
               echo "smoke test ok ($ARCH)"
             '
 

@@ -17,6 +17,10 @@ OUT_DIR=$4
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 [ -x "$VENV/bin/litellm" ] || { echo "venv not found or incomplete: $VENV" >&2; exit 1; }
+# The venv must carry the generated Prisma client (build/generate-prisma.sh);
+# without it a proxy with DATABASE_URL set dies at startup.
+"$VENV/bin/python" -c 'import prisma.client' 2>/dev/null \
+    || { echo "prisma client not generated in $VENV (run build/generate-prisma.sh first)" >&2; exit 1; }
 mkdir -p "$OUT_DIR"
 OUT_DIR=$(cd "$OUT_DIR" && pwd)
 
@@ -42,6 +46,16 @@ chmod 0644 "$ROOT/DEBIAN/conffiles"
 # /var/lib/dpkg/info/litellm.list by dpkg. /usr/bin/litellm is the launcher.
 cp -a "$VENV" "$ROOT/opt/litellm/venv"
 ln -s /opt/litellm/venv/bin/litellm "$ROOT/usr/bin/litellm"
+
+# The Prisma engine binaries (query-engine + the Node-based prisma CLI, used
+# for the startup migration diff) were generated into the final install
+# location by generate-prisma.sh, because the generated client embeds those
+# paths as absolute — ship the directory to exactly the same path.
+PRISMA_BINARY_CACHE_DIR=${PRISMA_BINARY_CACHE_DIR:-/opt/litellm/prisma/binaries}
+[ -d "$PRISMA_BINARY_CACHE_DIR" ] \
+    || { echo "prisma binaries not found: $PRISMA_BINARY_CACHE_DIR (run build/generate-prisma.sh first)" >&2; exit 1; }
+install -d "$ROOT/opt/litellm/prisma"
+cp -a "$PRISMA_BINARY_CACHE_DIR" "$ROOT/opt/litellm/prisma/binaries"
 
 install -m 0644 "$HERE/litellm.service" "$ROOT/lib/systemd/system/litellm.service"
 install -m 0644 "$HERE/config.yaml" "$ROOT/etc/litellm/config.yaml"

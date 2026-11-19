@@ -12,10 +12,14 @@ arm64, and publishes them weekly as GitHub Releases and a signed apt repository 
 - One deb: `build/download-wheels.sh <version> <arch> build/wheels-<arch>` (needs
   `python3-pip`), then `build/make-venv.sh <version> <wheels-dir> <venv-dir>`
   (needs Debian 13's `python3-venv` — the interpreter must be the target's
-  3.13), then `build/build-deb.sh <version> <arch> <venv-dir> dist`.
+  3.13), then `build/generate-prisma.sh <venv-dir>` (needs `nodejs`+`npm` and
+  network; bakes the generated Prisma client into the venv and the query
+  engine binaries into `/opt/litellm/prisma/binaries`), then
+  `build/build-deb.sh <version> <arch> <venv-dir> dist`.
 - Current build (2026-11-14): the deb ships a **complete venv** at
   `/opt/litellm/venv` (litellm[proxy,extra_proxy,saml,healthcheck] + all deps; pip removed again after the
-  offline install). `Depends:` is `python3, python3.13, systemd`; `ExecStart` runs the
+  offline install) plus the Prisma engine binaries at `/opt/litellm/prisma/binaries`.
+  `Depends:` is `python3, python3.13, systemd, nodejs`; `ExecStart` runs the
   venv entry point directly. No pipx, no PyPI access at install time, all
   venv files dpkg-tracked (`/var/lib/dpkg/info/litellm.list`, `dpkg -V`
   works). CI assembles each deb inside a `debian:trixie` container on a
@@ -24,6 +28,14 @@ arm64, and publishes them weekly as GitHub Releases and a signed apt repository 
   container. GitHub runners have no qemu/binfmt: a cross-arch container dies
   with "exec format error", so never run an arm64 container on an amd64
   runner (or vice versa).
+- The deb also ships the **generated Prisma client** (baked into the venv's
+  `prisma` package by `prisma generate`, like LiteLLM's Docker image does at
+  image build time) and the engine/CLI binaries at
+  `/opt/litellm/prisma/binaries` (`Depends:` includes `nodejs`: the Node prisma
+  CLI serves the startup migration diff). The generated client embeds the
+  binary dir as an absolute path, so it must be generated with
+  `PRISMA_BINARY_CACHE_DIR` at the final install location — never run
+  `prisma generate` with a different value and then build the deb.
 - The manylinux tag list in `download-wheels.sh` is deliberate and capped at
   `manylinux_2_41` (trixie's glibc 2.41): pip's `--platform` does not expand
   tags downward, and a dep tagged above 2_41 must fail the build instead of
